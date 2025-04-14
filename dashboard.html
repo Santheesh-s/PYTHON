@@ -1,437 +1,228 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Budget Tracker</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
-    <style>
-        body {
-            font-family: 'Arial', sans-serif;
-            text-align: center;
-            background-color: #f4f4f4;
-            margin: 0;
-            padding: 0;
-        }
-        .container {
-            width: 90%;
-            max-width: 500px;
-            margin: auto;
-            background: white;
-            padding: 20px;
-            border-radius: 10px;
-            box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.2);
-            margin-top: 20px;
-        }
-        h2 {
-            color: #333;
-            font-size: 22px;
-        }
-        input {
-            width: 90%;
-            padding: 10px;
-            margin: 5px 0;
-            border: 1px solid #ccc;
-            border-radius: 5px;
-            font-size: 16px;
-        }
-        button {
-            width: 95%;
-            padding: 10px;
-            margin: 10px 0;
-            background: #007bff;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 16px;
-            transition: 0.3s;
-        }
-        button:hover {
-            background: #0056b3;
-        }
-        .logout-btn {
-            background: red;
-        }
-        .logout-btn:hover {
-            background: darkred;
-        }
-        .expense-list {
-            padding: 0;
-            margin-top: 10px;
-        }
-        .expense-list li {
-            background: #e3f2fd;
-            padding: 10px;
-            margin: 5px 0;
-            border-radius: 5px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            font-size: 16px;
-        }
-        .expense-list li:nth-child(even) {
-            background: #bbdefb;
-        }
-        .delete-btn {
-            background: red;
-            color: white;
-            border: none;
-            padding: 5px 10px;
-            cursor: pointer;
-            border-radius: 5px;
-        }
-        .delete-btn:hover {
-            background: darkred;
-        }
-        .chart-container {
-            position: relative;
-            width: 100%;
-            height: 250px;
-            margin-top: 20px;
-        }
-        #remainingBudget {
-            font-weight: bold;
-            color: #007bff;
-            font-size: 18px;
-        }
-        #remainingBudget.warning {
-            color: #ff9800;
-        }
-        #remainingBudget.danger {
-            color: #f44336;
-        }
-        .budget-status {
-            margin: 10px 0;
-            font-size: 14px;
-        }
-        .progress-bar {
-            width: 100%;
-            height: 20px;
-            background-color: #e0e0e0;
-            border-radius: 10px;
-            overflow: hidden;
-        }
-        .progress {
-            height: 100%;
-            background-color: #4CAF50;
-            transition: width 0.3s ease;
-        }
-        .progress.warning {
-            background-color: #ff9800;
-        }
-        .progress.danger {
-            background-color: #f44336;
-        }
-        .edit-btn {
-            background: #4CAF50;
-            color: white;
-            border: none;
-            padding: 5px 10px;
-            cursor: pointer;
-            border-radius: 5px;
-            margin-right: 5px;
-        }
-        .edit-btn:hover {
-            background: #388E3C;
-        }
-        .edit-form {
-            display: none;
-            margin: 10px 0;
-        }
-    </style>
-    <script>
-        const INACTIVE_TIMEOUT = 30000; // 15 minutes in milliseconds
-        let inactivityTimer;
+from flask import Flask, request, jsonify, send_file, session, render_template_string
+import sqlite3
+import os
+import io
+import hashlib
+import hmac
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+import time
 
-        function resetInactivityTimer() {
-            clearTimeout(inactivityTimer);
-            inactivityTimer = setTimeout(autoLogout, INACTIVE_TIMEOUT);
-        }
+app = Flask(__name__)
+app.secret_key = "super_secret_key"  # Change in production!
+SALT = "your_secret_salt"
+app.config['PERMANENT_SESSION_LIFETIME'] = 60
 
-        function autoLogout() {
-            logout();
-        }
+@app.before_request
+def before_request():
+    session.permanent = True  # Set session to use permanent session lifetime
+    if 'user' in session:
+        # Update last activity timestamp
+        session['last_activity'] = int(time.time())
 
-        // Track user activity
-        document.addEventListener('mousemove', resetInactivityTimer);
-        document.addEventListener('keypress', resetInactivityTimer);
-        document.addEventListener('click', resetInactivityTimer);
-        document.addEventListener('scroll', resetInactivityTimer);
+def init_db():
+    with sqlite3.connect('budget.db') as conn:
+        c = conn.cursor()
+        # Create users table
+        c.execute('''CREATE TABLE IF NOT EXISTS users
+                    (username TEXT PRIMARY KEY, password TEXT)''')
+        # Create expenses table
+        c.execute('''CREATE TABLE IF NOT EXISTS expenses
+                    (id INTEGER PRIMARY KEY, username TEXT,
+                     category TEXT, amount REAL, description TEXT,
+                     FOREIGN KEY (username) REFERENCES users(username))''')
+        # Create budgets table
+        c.execute('''CREATE TABLE IF NOT EXISTS budgets
+                    (username TEXT PRIMARY KEY, amount REAL,
+                     FOREIGN KEY (username) REFERENCES users(username))''')
+        conn.commit()
 
-        // Initialize timer when page loads
-        window.onload = function() {
-            resetInactivityTimer();
-            // ...existing onload code...
-        };
-    </script>
-</head>
-<body>
-    <div class="container">
-        <h2>Budget Tracker</h2>
-        <button class="logout-btn" onclick="logout()">Logout</button>
+# --- Helper Functions ---
+def hash_password(password):
+    return hashlib.sha256((password + SALT).encode()).hexdigest()
 
-        <h2>Set Budget</h2>
-        <input type="number" id="budget" placeholder="Enter Budget">
-        <button onclick="setBudget()">Set Budget</button>
+def get_user_budget(username):
+    with sqlite3.connect('budget.db') as conn:
+        c = conn.cursor()
+        c.execute('SELECT amount FROM budgets WHERE username = ?', (username,))
+        result = c.fetchone()
+        return result[0] if result else 0
 
-        <h2>Add Expense</h2>
-        <input type="text" id="category" placeholder="Category">
-        <input type="number" id="amount" placeholder="Amount">
-        <button onclick="addExpense()">Add Expense</button>
+def get_user_expenses(username):
+    with sqlite3.connect('budget.db') as conn:
+        c = conn.cursor()
+        c.execute('SELECT category, amount, description FROM expenses WHERE username = ?', (username,))
+        return [{'category': row[0], 'amount': row[1], 'description': row[2]} for row in c.fetchall()]
 
-        <h2>Expense Chart</h2>
-        <div class="chart-container">
-            <canvas id="expenseChart"></canvas>
-        </div>
+def is_strong_password(password):
+    """
+    Validate password strength:
+    - At least 8 characters long
+    - Contains uppercase and lowercase letters
+    - Contains at least one number
+    - Contains at least one special character
+    """
+    if len(password) < 8:
+        return False, "Password must be at least 8 characters long"
+    if not any(c.isupper() for c in password):
+        return False, "Password must contain at least one uppercase letter"
+    if not any(c.islower() for c in password):
+        return False, "Password must contain at least one lowercase letter"
+    if not any(c.isdigit() for c in password):
+        return False, "Password must contain at least one number"
+    if not any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in password):
+        return False, "Password must contain at least one special character"
+    return True, "Password is strong"
 
-        <h2>Budget Status</h2>
-        <div class="budget-status">
-            <div class="progress-bar">
-                <div id="budgetProgress" class="progress"></div>
-            </div>
-            <p>Used: <span id="budgetPercentage">0</span>%</p>
-        </div>
-        <h2>Remaining Budget: ₹<span id="remainingBudget">0</span></h2>
+# --- Routes ---
+@app.route("/")
+def index():
+    if "user" not in session:
+        return render_template_string(open("login.html").read())
+    return render_template_string(open("dashboard.html").read())
 
-        <h2>Expense List</h2>
-        <ul class="expense-list" id="expenseList"></ul>
+@app.route("/signup", methods=["POST"])
+def signup():
+    username = request.form["username"]
+    password = request.form["password"]
+    
+    # Validate password
+    is_valid, message = is_strong_password(password)
+    if not is_valid:
+        return jsonify({"success": False, "message": message})
+    
+    password_hash = hash_password(password)
+    
+    try:
+        with sqlite3.connect('budget.db') as conn:
+            c = conn.cursor()
+            c.execute('INSERT INTO users (username, password) VALUES (?, ?)', 
+                     (username, password_hash))
+            conn.commit()
+            return jsonify({"success": True, "message": "Signup successful!"})
+    except sqlite3.IntegrityError:
+        return jsonify({"success": False, "message": "User already exists!"})
 
-        <button onclick="downloadPDF()">Download PDF</button>
+@app.route("/check_password", methods=["POST"])
+def check_password():
+    password = request.form.get("password")
+    is_valid, message = is_strong_password(password)
+    return jsonify({"valid": is_valid, "message": message})
 
-        <div id="editExpenseForm" class="edit-form">
-            <h2>Edit Expense</h2>
-            <input type="text" id="editCategory" placeholder="Category">
-            <input type="number" id="editAmount" placeholder="Amount">
-            <input type="hidden" id="editIndex">
-            <button onclick="saveEdit()">Save Changes</button>
-            <button onclick="cancelEdit()" style="background: #777;">Cancel</button>
-        </div>
-    </div>
+@app.route("/login", methods=["POST"])
+def login():
+    username = request.form["username"]
+    password = request.form["password"]
+    
+    with sqlite3.connect('budget.db') as conn:
+        c = conn.cursor()
+        c.execute('SELECT password FROM users WHERE username = ?', (username,))
+        result = c.fetchone()
+        
+        if result and hmac.compare_digest(result[0], hash_password(password)):
+            session["user"] = username
+            return jsonify({"success": True, "message": "Login successful!"})
+    
+    return jsonify({"success": False, "message": "Invalid credentials!"})
 
-    <script>
-        let budget = 0;
+@app.route("/logout")
+def logout():
+    session.pop("user", None)
+    return jsonify({"message": "Logged out successfully!"})
 
-        function setBudget() {
-            let enteredBudget = parseFloat(document.getElementById("budget").value);
-            if (!isNaN(enteredBudget) && enteredBudget > 0) {
-                budget = enteredBudget;
-                localStorage.setItem("budget", budget);
-                updateRemainingBudget();
-            } else {
-                alert("Please enter a valid budget amount.");
-            }
-        }
+@app.route("/set_budget", methods=["POST"])
+def set_budget():
+    if "user" not in session:
+        return jsonify({"message": "Not logged in!"}), 401
+        
+    with sqlite3.connect('budget.db') as conn:
+        c = conn.cursor()
+        c.execute('INSERT OR REPLACE INTO budgets (username, amount) VALUES (?, ?)',
+                 (session["user"], float(request.form["budget"])))
+        conn.commit()
+    return jsonify({"message": "Budget set successfully!"})
 
-        function addExpense() {
-            let category = document.getElementById("category").value;
-            let amount = parseFloat(document.getElementById("amount").value);
+@app.route("/add_expense", methods=["POST"])
+def add_expense():
+    if "user" not in session:
+        return jsonify({"message": "Not logged in!"}), 401
+        
+    with sqlite3.connect('budget.db') as conn:
+        c = conn.cursor()
+        c.execute('INSERT INTO expenses (username, category, amount, description) VALUES (?, ?, ?, ?)',
+                 (session["user"], request.form["category"], 
+                  float(request.form["amount"]), request.form["description"]))
+        conn.commit()
+    return jsonify({"message": "Expense added!"})
 
-            if (category && !isNaN(amount) && amount > 0) {
-                let expenses = JSON.parse(localStorage.getItem("expenses")) || [];
-                let totalExpenses = expenses.reduce((sum, expense) => sum + expense.amount, 0);
-                
-                if (totalExpenses + amount > budget) {
-                    alert("Warning: This expense would exceed your budget! Cannot add expense.");
-                    return;
-                } else if ((totalExpenses + amount) / budget >= 0.9) {
-                    if (!confirm("Warning: This expense will put you at 90% or more of your budget. Continue?")) {
-                        return;
-                    }
-                } else if ((totalExpenses + amount) / budget >= 0.75) {
-                    alert("Warning: You are approaching your budget limit!");
-                }
+@app.route("/edit_expense", methods=["POST"])
+def edit_expense():
+    if "user" not in session:
+        return jsonify({"message": "Not logged in!"}), 401
+        
+    expense_id = request.form.get("id")
+    category = request.form.get("category")
+    amount = float(request.form.get("amount"))
+    description = request.form.get("description", "")
+        
+    with sqlite3.connect('budget.db') as conn:
+        c = conn.cursor()
+        c.execute('''UPDATE expenses 
+                    SET category = ?, amount = ?, description = ?
+                    WHERE id = ? AND username = ?''',
+                 (category, amount, description, expense_id, session["user"]))
+        conn.commit()
+        if c.rowcount > 0:
+            return jsonify({"message": "Expense updated successfully!"})
+        return jsonify({"message": "Expense not found or unauthorized"}), 404
 
-                expenses.push({ category, amount });
-                localStorage.setItem("expenses", JSON.stringify(expenses));
-                updateRemainingBudget();
-                loadChart();
-                displayExpenses();
-                
-                document.getElementById("category").value = "";
-                document.getElementById("amount").value = "";
-            } else {
-                alert("Please enter valid expense details.");
-            }
-        }
+@app.route("/remaining_budget")
+def remaining_budget():
+    if "user" not in session:
+        return jsonify({"message": "Not logged in!"}), 401
+        
+    with sqlite3.connect('budget.db') as conn:
+        c = conn.cursor()
+        budget = get_user_budget(session["user"])
+        c.execute('SELECT SUM(amount) FROM expenses WHERE username = ?', (session["user"],))
+        total_expenses = c.fetchone()[0] or 0
+    return jsonify({"remaining": budget - total_expenses})
 
-        function deleteExpense(index) {
-            let expenses = JSON.parse(localStorage.getItem("expenses")) || [];
-            expenses.splice(index, 1);
-            localStorage.setItem("expenses", JSON.stringify(expenses));
-            updateRemainingBudget();
-            loadChart();
-            displayExpenses();
-        }
+@app.route("/expenses_data")
+def expenses_data():
+    if "user" not in session:
+        return jsonify({"message": "Not logged in!"}), 401
+        
+    with sqlite3.connect('budget.db') as conn:
+        c = conn.cursor()
+        c.execute('''SELECT category, SUM(amount) FROM expenses 
+                    WHERE username = ? GROUP BY category''', (session["user"],))
+        results = c.fetchall()
+        categories = [row[0] for row in results]
+        amounts = [row[1] for row in results]
+    return jsonify({"categories": categories, "amounts": amounts})
 
-        function updateRemainingBudget() {
-            let expenses = JSON.parse(localStorage.getItem("expenses")) || [];
-            let totalExpenses = expenses.reduce((sum, expense) => sum + expense.amount, 0);
-            let remaining = budget - totalExpenses;
-            let percentage = (totalExpenses / budget) * 100 || 0;
+@app.route("/download_pdf")
+def download_pdf():
+    if "user" not in session:
+        return jsonify({"message": "Not logged in!"}), 401
 
-            // Update remaining amount
-            const remainingElement = document.getElementById("remainingBudget");
-            remainingElement.textContent = remaining.toFixed(2);
+    data = {"budget": get_user_budget(session["user"]), "expenses": get_user_expenses(session["user"])}
+    buffer = io.BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=letter)
+    pdf.setTitle("Budget Report")
+    pdf.drawString(200, 750, "Budget Report")
+    pdf.drawString(50, 720, f"Total Budget: ${data['budget']}")
+    
+    y = 700
+    for expense in data["expenses"]:
+        pdf.drawString(50, y, f"{expense['category']}: ${expense['amount']} ({expense['description']})")
+        y -= 20
 
-            // Update progress bar and percentage
-            document.getElementById("budgetProgress").style.width = `${percentage}%`;
-            document.getElementById("budgetPercentage").textContent = percentage.toFixed(1);
+    pdf.save()
+    buffer.seek(0)
+    return send_file(buffer, as_attachment=True, download_name="Budget_Report.pdf")
 
-            // Update colors based on remaining budget
-            if (percentage >= 90) {
-                remainingElement.className = 'danger';
-                document.getElementById("budgetProgress").className = 'progress danger';
-            } else if (percentage >= 75) {
-                remainingElement.className = 'warning';
-                document.getElementById("budgetProgress").className = 'progress warning';
-            } else {
-                remainingElement.className = '';
-                document.getElementById("budgetProgress").className = 'progress';
-            }
-        }
-
-        let expenseChart = null; // Global variable to store chart instance
-
-function loadChart() {
-    let expenses = JSON.parse(localStorage.getItem("expenses")) || [];
-    let categories = expenses.map(exp => exp.category);
-    let amounts = expenses.map(exp => exp.amount);
-
-    let ctx = document.getElementById("expenseChart").getContext("2d");
-
-    // Destroy previous chart instance if it exists
-    if (expenseChart !== null) {
-        expenseChart.destroy();
-    }
-
-    // Create new chart
-    expenseChart = new Chart(ctx, {
-        type: "bar",
-        data: {
-            labels: categories,
-            datasets: [{
-                data: amounts,
-                backgroundColor: "blue"
-            }]
-        }
-    });
-}
-
-        function logout() {
-    fetch('/logout', { method: 'GET' })
-        .then(response => response.json())
-        .then(data => {
-            alert(data.message);
-            localStorage.removeItem("budget");
-            localStorage.removeItem("expenses");
-            window.location.href = "/"; // Redirect to login page
-        })
-        .catch(error => console.error("Logout failed:", error));
-}
-
-        function displayExpenses() {
-            let expenses = JSON.parse(localStorage.getItem("expenses")) || [];
-            let expenseList = document.getElementById("expenseList");
-            expenseList.innerHTML = "";
-
-            expenses.forEach((expense, index) => {
-                let li = document.createElement("li");
-                li.innerHTML = `${expense.category}: ₹${expense.amount.toFixed(2)} 
-                                <div>
-                                    <button class="edit-btn" onclick="editExpense(${index})">Edit</button>
-                                    <button class="delete-btn" onclick="deleteExpense(${index})">Delete</button>
-                                </div>`;
-                expenseList.appendChild(li);
-            });
-        }
-
-        function editExpense(index) {
-            let expenses = JSON.parse(localStorage.getItem("expenses")) || [];
-            let expense = expenses[index];
-            
-            // Show edit form and populate fields
-            document.getElementById("editExpenseForm").style.display = "block";
-            document.getElementById("editCategory").value = expense.category;
-            document.getElementById("editAmount").value = expense.amount;
-            document.getElementById("editIndex").value = index;
-        }
-
-        function saveEdit() {
-            let index = parseInt(document.getElementById("editIndex").value);
-            let newCategory = document.getElementById("editCategory").value;
-            let newAmount = parseFloat(document.getElementById("editAmount").value);
-
-            if (newCategory && !isNaN(newAmount) && newAmount > 0) {
-                let expenses = JSON.parse(localStorage.getItem("expenses")) || [];
-                let totalExpenses = expenses.reduce((sum, exp, i) => i !== index ? sum + exp.amount : sum, 0);
-                
-                // Check if edited amount would exceed budget
-                if (totalExpenses + newAmount > budget) {
-                    alert("This change would exceed your budget! Cannot save changes.");
-                    return;
-                }
-
-                expenses[index] = { category: newCategory, amount: newAmount };
-                localStorage.setItem("expenses", JSON.stringify(expenses));
-                
-                updateRemainingBudget();
-                loadChart();
-                displayExpenses();
-                cancelEdit();
-            } else {
-                alert("Please enter valid expense details.");
-            }
-        }
-
-        function cancelEdit() {
-            document.getElementById("editExpenseForm").style.display = "none";
-            document.getElementById("editCategory").value = "";
-            document.getElementById("editAmount").value = "";
-            document.getElementById("editIndex").value = "";
-        }
-
- function downloadPDF() {
-            const { jsPDF } = window.jspdf;
-            let doc = new jsPDF();
-
-            doc.setFontSize(18);
-            doc.text("Budget Report", 80, 10);
-
-            let budget = localStorage.getItem("budget") || "0";
-            let expenses = JSON.parse(localStorage.getItem("expenses")) || [];
-            let totalExpenses = expenses.reduce((sum, expense) => sum + expense.amount, 0);
-            let remaining = budget - totalExpenses;
-
-            doc.setFontSize(12);
-            doc.text(`Total Budget: ₹${budget}`, 10, 20);
-            doc.text(`Total Expenses: ₹${totalExpenses.toFixed(2)}`, 10, 30);
-            doc.text(`Remaining Budget: ₹${remaining.toFixed(2)}`, 10, 40);
-
-            let y = 50;
-            doc.text("Expenses:", 10, y);
-            y += 10;
-
-            expenses.forEach(exp => {
-                doc.text(`${exp.category}: ₹${exp.amount.toFixed(2)}`, 10, y);
-                y += 10;
-            });
-
-            html2canvas(document.getElementById("expenseChart")).then(canvas => {
-                let imgData = canvas.toDataURL("image/png");
-                doc.addImage(imgData, "PNG", 10, y + 10, 180, 60);
-                doc.save("budget_report.pdf");
-            });
-        }
-
-        window.onload = function () {
-            resetInactivityTimer();
-            budget = parseFloat(localStorage.getItem("budget")) || 0;
-            document.getElementById("budget").value = budget;
-            updateRemainingBudget();
-            loadChart();
-            displayExpenses();
-        };
-    </script>
-</body>
-</html>
+if __name__ == "__main__":
+    init_db()
+    app.run(debug=True)
