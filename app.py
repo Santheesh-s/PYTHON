@@ -6,10 +6,19 @@ import hashlib
 import hmac
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
+import time
 
 app = Flask(__name__)
 app.secret_key = "super_secret_key"  # Change in production!
 SALT = "your_secret_salt"
+app.config['PERMANENT_SESSION_LIFETIME'] = 60
+
+@app.before_request
+def before_request():
+    session.permanent = True  # Set session to use permanent session lifetime
+    if 'user' in session:
+        # Update last activity timestamp
+        session['last_activity'] = int(time.time())
 
 def init_db():
     with sqlite3.connect('budget.db') as conn:
