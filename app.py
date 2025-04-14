@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify, send_file, session, render_template_string
-import json
+import sqlite3
 import os
 import io
 import hashlib
@@ -9,65 +9,77 @@ from reportlab.pdfgen import canvas
 
 app = Flask(__name__)
 app.secret_key = "super_secret_key"  # Change in production!
-
-DATA_FILE = "expenses.json"
-USER_FILE = "users.json"
 SALT = "your_secret_salt"
 
+def init_db():
+    with sqlite3.connect('budget.db') as conn:
+        c = conn.cursor()
+        # Create users table
+        c.execute('''CREATE TABLE IF NOT EXISTS users
+                    (username TEXT PRIMARY KEY, password TEXT)''')
+        # Create expenses table
+        c.execute('''CREATE TABLE IF NOT EXISTS expenses
+                    (id INTEGER PRIMARY KEY, username TEXT,
+                     category TEXT, amount REAL, description TEXT,
+                     FOREIGN KEY (username) REFERENCES users(username))''')
+        # Create budgets table
+        c.execute('''CREATE TABLE IF NOT EXISTS budgets
+                    (username TEXT PRIMARY KEY, amount REAL,
+                     FOREIGN KEY (username) REFERENCES users(username))''')
+        conn.commit()
+
 # --- Helper Functions ---
-def load_data():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r") as file:
-            return json.load(file)
-    return {"budget": 0, "expenses": []}
-
-def save_data(data):
-    with open(DATA_FILE, "w") as file:
-        json.dump(data, file)
-
-def load_users():
-    if os.path.exists(USER_FILE):
-        with open(USER_FILE, "r") as file:
-            return json.load(file)
-    return {}
-
-def save_users(users):
-    with open(USER_FILE, "w") as file:
-        json.dump(users, file)
-
 def hash_password(password):
-    """Hashes a password using SHA-256 with a salt."""
     return hashlib.sha256((password + SALT).encode()).hexdigest()
+
+def get_user_budget(username):
+    with sqlite3.connect('budget.db') as conn:
+        c = conn.cursor()
+        c.execute('SELECT amount FROM budgets WHERE username = ?', (username,))
+        result = c.fetchone()
+        return result[0] if result else 0
+
+def get_user_expenses(username):
+    with sqlite3.connect('budget.db') as conn:
+        c = conn.cursor()
+        c.execute('SELECT category, amount, description FROM expenses WHERE username = ?', (username,))
+        return [{'category': row[0], 'amount': row[1], 'description': row[2]} for row in c.fetchall()]
 
 # --- Routes ---
 @app.route("/")
 def index():
     if "user" not in session:
-        return render_template_string(open("templates/login.html").read())
-    return render_template_string(open("templates/dashboard.html").read())
+        return render_template_string(open("login.html").read())
+    return render_template_string(open("dashboard.html").read())
 
 @app.route("/signup", methods=["POST"])
 def signup():
-    users = load_users()
     username = request.form["username"]
     password_hash = hash_password(request.form["password"])
-
-    if username in users:
-        return jsonify({"message": "User already exists!"})
     
-    users[username] = password_hash
-    save_users(users)
-    return jsonify({"message": "Signup successful!"})
+    try:
+        with sqlite3.connect('budget.db') as conn:
+            c = conn.cursor()
+            c.execute('INSERT INTO users (username, password) VALUES (?, ?)', 
+                     (username, password_hash))
+            conn.commit()
+            return jsonify({"message": "Signup successful!"})
+    except sqlite3.IntegrityError:
+        return jsonify({"message": "User already exists!"})
 
 @app.route("/login", methods=["POST"])
 def login():
-    users = load_users()
     username = request.form["username"]
     password = request.form["password"]
-
-    if username in users and hmac.compare_digest(users[username], hash_password(password)):
-        session["user"] = username
-        return jsonify({"success": True, "message": "Login successful!"})
+    
+    with sqlite3.connect('budget.db') as conn:
+        c = conn.cursor()
+        c.execute('SELECT password FROM users WHERE username = ?', (username,))
+        result = c.fetchone()
+        
+        if result and hmac.compare_digest(result[0], hash_password(password)):
+            session["user"] = username
+            return jsonify({"success": True, "message": "Login successful!"})
     
     return jsonify({"success": False, "message": "Invalid credentials!"})
 
@@ -78,38 +90,61 @@ def logout():
 
 @app.route("/set_budget", methods=["POST"])
 def set_budget():
-    data = load_data()
-    data["budget"] = float(request.form["budget"])
-    save_data(data)
+    if "user" not in session:
+        return jsonify({"message": "Not logged in!"}), 401
+        
+    with sqlite3.connect('budget.db') as conn:
+        c = conn.cursor()
+        c.execute('INSERT OR REPLACE INTO budgets (username, amount) VALUES (?, ?)',
+                 (session["user"], float(request.form["budget"])))
+        conn.commit()
     return jsonify({"message": "Budget set successfully!"})
 
 @app.route("/add_expense", methods=["POST"])
 def add_expense():
-    data = load_data()
-    amount = float(request.form["amount"])
-    expense = {"category": request.form["category"], "amount": amount, "description": request.form["description"]}
-    data["expenses"].append(expense)
-    save_data(data)
+    if "user" not in session:
+        return jsonify({"message": "Not logged in!"}), 401
+        
+    with sqlite3.connect('budget.db') as conn:
+        c = conn.cursor()
+        c.execute('INSERT INTO expenses (username, category, amount, description) VALUES (?, ?, ?, ?)',
+                 (session["user"], request.form["category"], 
+                  float(request.form["amount"]), request.form["description"]))
+        conn.commit()
     return jsonify({"message": "Expense added!"})
 
 @app.route("/remaining_budget")
 def remaining_budget():
-    data = load_data()
-    total_expenses = sum(exp["amount"] for exp in data["expenses"])
-    return jsonify({"remaining": data["budget"] - total_expenses})
+    if "user" not in session:
+        return jsonify({"message": "Not logged in!"}), 401
+        
+    with sqlite3.connect('budget.db') as conn:
+        c = conn.cursor()
+        budget = get_user_budget(session["user"])
+        c.execute('SELECT SUM(amount) FROM expenses WHERE username = ?', (session["user"],))
+        total_expenses = c.fetchone()[0] or 0
+    return jsonify({"remaining": budget - total_expenses})
 
 @app.route("/expenses_data")
 def expenses_data():
-    data = load_data()
-    category_totals = {}
-    for expense in data["expenses"]:
-        category_totals[expense["category"]] = category_totals.get(expense["category"], 0) + expense["amount"]
-    
-    return jsonify({"categories": list(category_totals.keys()), "amounts": list(category_totals.values())})
+    if "user" not in session:
+        return jsonify({"message": "Not logged in!"}), 401
+        
+    with sqlite3.connect('budget.db') as conn:
+        c = conn.cursor()
+        c.execute('''SELECT category, SUM(amount) FROM expenses 
+                    WHERE username = ? GROUP BY category''', (session["user"],))
+        results = c.fetchall()
+        categories = [row[0] for row in results]
+        amounts = [row[1] for row in results]
+    return jsonify({"categories": categories, "amounts": amounts})
 
 @app.route("/download_pdf")
 def download_pdf():
-    data = load_data()
+    if "user" not in session:
+        return jsonify({"message": "Not logged in!"}), 401
+
+    data = {"budget": get_user_budget(session["user"]), "expenses": get_user_expenses(session["user"])}
     buffer = io.BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=letter)
     pdf.setTitle("Budget Report")
@@ -126,4 +161,5 @@ def download_pdf():
     return send_file(buffer, as_attachment=True, download_name="Budget_Report.pdf")
 
 if __name__ == "__main__":
+    init_db()
     app.run(debug=True)
