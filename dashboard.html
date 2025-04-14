@@ -97,7 +97,7 @@
         }
     </style>
     <script>
-        const INACTIVE_TIMEOUT = 30000; // 15 minutes in milliseconds
+        const INACTIVE_TIMEOUT = 300000; // 5 minutes in milliseconds
         let inactivityTimer;
 
         function resetInactivityTimer() {
@@ -168,13 +168,25 @@
             let amount = parseFloat(document.getElementById("amount").value);
 
             if (category && !isNaN(amount) && amount > 0) {
+                // Calculate current total expenses
                 let expenses = JSON.parse(localStorage.getItem("expenses")) || [];
+                let totalExpenses = expenses.reduce((sum, expense) => sum + expense.amount, 0);
+                
+                // Check if new expense would exceed budget
+                if (totalExpenses + amount > budget) {
+                    alert("This expense would exceed your budget! Cannot add expense.");
+                    return;
+                }
+
                 expenses.push({ category, amount });
                 localStorage.setItem("expenses", JSON.stringify(expenses));
                 updateRemainingBudget();
                 loadChart();
                 displayExpenses();
                 
+                // Clear input fields after successful addition
+                document.getElementById("category").value = "";
+                document.getElementById("amount").value = "";
             } else {
                 alert("Please enter valid expense details.");
             }
