@@ -45,6 +45,26 @@ def get_user_expenses(username):
         c.execute('SELECT category, amount, description FROM expenses WHERE username = ?', (username,))
         return [{'category': row[0], 'amount': row[1], 'description': row[2]} for row in c.fetchall()]
 
+def is_strong_password(password):
+    """
+    Validate password strength:
+    - At least 8 characters long
+    - Contains uppercase and lowercase letters
+    - Contains at least one number
+    - Contains at least one special character
+    """
+    if len(password) < 8:
+        return False, "Password must be at least 8 characters long"
+    if not any(c.isupper() for c in password):
+        return False, "Password must contain at least one uppercase letter"
+    if not any(c.islower() for c in password):
+        return False, "Password must contain at least one lowercase letter"
+    if not any(c.isdigit() for c in password):
+        return False, "Password must contain at least one number"
+    if not any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in password):
+        return False, "Password must contain at least one special character"
+    return True, "Password is strong"
+
 # --- Routes ---
 @app.route("/")
 def index():
@@ -55,7 +75,14 @@ def index():
 @app.route("/signup", methods=["POST"])
 def signup():
     username = request.form["username"]
-    password_hash = hash_password(request.form["password"])
+    password = request.form["password"]
+    
+    # Validate password
+    is_valid, message = is_strong_password(password)
+    if not is_valid:
+        return jsonify({"success": False, "message": message})
+    
+    password_hash = hash_password(password)
     
     try:
         with sqlite3.connect('budget.db') as conn:
@@ -63,9 +90,15 @@ def signup():
             c.execute('INSERT INTO users (username, password) VALUES (?, ?)', 
                      (username, password_hash))
             conn.commit()
-            return jsonify({"message": "Signup successful!"})
+            return jsonify({"success": True, "message": "Signup successful!"})
     except sqlite3.IntegrityError:
-        return jsonify({"message": "User already exists!"})
+        return jsonify({"success": False, "message": "User already exists!"})
+
+@app.route("/check_password", methods=["POST"])
+def check_password():
+    password = request.form.get("password")
+    is_valid, message = is_strong_password(password)
+    return jsonify({"valid": is_valid, "message": message})
 
 @app.route("/login", methods=["POST"])
 def login():
