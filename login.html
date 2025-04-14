@@ -74,6 +74,51 @@
             padding-top: 10px;
             border-top: 2px solid #ddd;
         }
+
+        .password-strength {
+            margin: 10px 0;
+            font-size: 14px;
+            text-align: left;
+            padding: 0 20px;
+        }
+        
+        .strength-meter {
+            height: 4px;
+            background: #ddd;
+            border-radius: 2px;
+            margin: 5px 0;
+        }
+        
+        .strength-meter div {
+            height: 100%;
+            width: 0;
+            transition: width 0.3s;
+            border-radius: 2px;
+        }
+        
+        .weak { background-color: #ff4444; }
+        .medium { background-color: #ffbb33; }
+        .strong { background-color: #00C851; }
+        
+        .password-requirements {
+            font-size: 12px;
+            color: #666;
+            text-align: left;
+            margin: 5px 0;
+            padding: 0 20px;
+        }
+        
+        .requirement {
+            margin: 2px 0;
+        }
+        
+        .requirement.met {
+            color: #00C851;
+        }
+        
+        .requirement.unmet {
+            color: #ff4444;
+        }
     </style>
 </head>
 <body>
@@ -81,6 +126,19 @@
         <h2>Sign Up</h2>
         <input type="text" id="signupUser" placeholder="Username">
         <input type="password" id="signupPass" placeholder="Password">
+        <div class="password-strength">
+            <div>Password Strength: <span id="strengthText">None</span></div>
+            <div class="strength-meter">
+                <div id="strengthMeter"></div>
+            </div>
+        </div>
+        <div class="password-requirements" id="requirements">
+            <div class="requirement" id="length">• At least 8 characters</div>
+            <div class="requirement" id="uppercase">• At least one uppercase letter</div>
+            <div class="requirement" id="lowercase">• At least one lowercase letter</div>
+            <div class="requirement" id="number">• At least one number</div>
+            <div class="requirement" id="special">• At least one special character</div>
+        </div>
         <button onclick="signup()">Sign Up</button>
         <div class="login-box">
             <h2>Login</h2>
@@ -91,25 +149,91 @@
     </div>
 
     <script>
-        function signup() {
-            const username = document.getElementById("signupUser").value;
-            const password = document.getElementById("signupPass").value;
-            fetch("/signup", {
-                method: "POST",
-                body: new URLSearchParams({ username, password })
-            }).then(response => response.json()).then(data => alert(data.message));
+        function checkPasswordStrength(password) {
+            const requirements = {
+                length: password.length >= 8,
+                uppercase: /[A-Z]/.test(password),
+                lowercase: /[a-z]/.test(password),
+                number: /[0-9]/.test(password),
+                special: /[!@#$%^&*()_+\-=\[\]{};:,.<>?]/.test(password)
+            };
+            
+            // Update requirement indicators
+            Object.keys(requirements).forEach(req => {
+                const element = document.getElementById(req);
+                element.className = `requirement ${requirements[req] ? 'met' : 'unmet'}`;
+            });
+            
+            // Calculate strength
+            const strength = Object.values(requirements).filter(Boolean).length;
+            const meter = document.getElementById('strengthMeter');
+            const strengthText = document.getElementById('strengthText');
+            
+            if (strength === 0) {
+                meter.className = '';
+                meter.style.width = '0%';
+                strengthText.textContent = 'None';
+            } else if (strength <= 2) {
+                meter.className = 'weak';
+                meter.style.width = '33%';
+                strengthText.textContent = 'Weak';
+            } else if (strength <= 4) {
+                meter.className = 'medium';
+                meter.style.width = '66%';
+                strengthText.textContent = 'Medium';
+            } else {
+                meter.className = 'strong';
+                meter.style.width = '100%';
+                strengthText.textContent = 'Strong';
+            }
+            
+            return strength === 5;
         }
 
-        function login() {
+        document.getElementById('signupPass').addEventListener('input', function(e) {
+            checkPasswordStrength(e.target.value);
+        });
+
+        async function signup() {
+            const username = document.getElementById("signupUser").value;
+            const password = document.getElementById("signupPass").value;
+            
+            if (!checkPasswordStrength(password)) {
+                alert("Please use a stronger password");
+                return;
+            }
+
+            try {
+                const response = await fetch("/signup", {
+                    method: "POST",
+                    body: new URLSearchParams({ username, password })
+                });
+                const data = await response.json();
+                alert(data.message);
+                if (data.success) {
+                    document.getElementById("signupUser").value = "";
+                    document.getElementById("signupPass").value = "";
+                }
+            } catch (error) {
+                alert("Signup failed: " + error);
+            }
+        }
+
+        async function login() {
             const username = document.getElementById("loginUser").value;
             const password = document.getElementById("loginPass").value;
-            fetch("/login", {
-                method: "POST",
-                body: new URLSearchParams({ username, password })
-            }).then(response => response.json()).then(data => {
+            
+            try {
+                const response = await fetch("/login", {
+                    method: "POST",
+                    body: new URLSearchParams({ username, password })
+                });
+                const data = await response.json();
                 alert(data.message);
                 if (data.success) window.location.reload();
-            });
+            } catch (error) {
+                alert("Login failed: " + error);
+            }
         }
     </script>
 </body>
