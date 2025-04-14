@@ -35,6 +35,16 @@ def init_db():
         c.execute('''CREATE TABLE IF NOT EXISTS budgets
                     (username TEXT PRIMARY KEY, amount REAL,
                      FOREIGN KEY (username) REFERENCES users(username))''')
+        # Create achievements table
+        c.execute('''CREATE TABLE IF NOT EXISTS achievements
+                    (username TEXT, achievement_key TEXT,
+                     PRIMARY KEY (username, achievement_key),
+                     FOREIGN KEY (username) REFERENCES users(username))''')
+        # Create expense_streaks table
+        c.execute('''CREATE TABLE IF NOT EXISTS expense_streaks
+                    (username TEXT PRIMARY KEY, last_expense_date TEXT, 
+                     current_streak INTEGER,
+                     FOREIGN KEY (username) REFERENCES users(username))''')
         conn.commit()
 
 # --- Helper Functions ---
@@ -149,11 +159,53 @@ def add_expense():
         
     with sqlite3.connect('budget.db') as conn:
         c = conn.cursor()
-        c.execute('INSERT INTO expenses (username, category, amount, description) VALUES (?, ?, ?, ?)',
-                 (session["user"], request.form["category"], 
-                  float(request.form["amount"]), request.form["description"]))
+        c.execute('INSERT INTO expenses (username, category, amount) VALUES (?, ?, ?)',
+                 (session["user"], request.form["category"], float(request.form["amount"])))
         conn.commit()
-    return jsonify({"message": "Expense added!"})
+    return jsonify({"message": "Expense added!", "success": True})
+
+@app.route("/edit_expense", methods=["POST"])
+def edit_expense():
+    if "user" not in session:
+        return jsonify({"message": "Not logged in!"}), 401
+        
+    expense_id = request.form.get("id")
+    category = request.form.get("category")
+    amount = float(request.form.get("amount"))
+    description = request.form.get("description", "")
+        
+    with sqlite3.connect('budget.db') as conn:
+        c = conn.cursor()
+        c.execute('''UPDATE expenses 
+                    SET category = ?, amount = ?, description = ?
+                    WHERE id = ? AND username = ?''',
+                 (category, amount, description, expense_id, session["user"]))
+        conn.commit()
+        if c.rowcount > 0:
+            return jsonify({"message": "Expense updated successfully!"})
+        return jsonify({"message": "Expense not found or unauthorized"}), 404
+
+@app.route("/delete_expense", methods=["POST"])
+def delete_expense():
+    if "user" not in session:
+        return jsonify({"success": False, "message": "Not logged in!"}), 401
+        
+    category = request.form.get("category")
+    amount = request.form.get("amount")
+    
+    try:
+        with sqlite3.connect('budget.db') as conn:
+            c = conn.cursor()
+            c.execute('''DELETE FROM expenses 
+                        WHERE username = ? AND category = ? AND amount = ? LIMIT 1''',
+                     (session["user"], category, amount))
+            conn.commit()
+            
+            if c.rowcount > 0:
+                return jsonify({"success": True, "message": "Expense deleted successfully"})
+            return jsonify({"success": False, "message": "Expense not found"})
+    except sqlite3.Error as e:
+        return jsonify({"success": False, "message": str(e)})
 
 @app.route("/remaining_budget")
 def remaining_budget():
@@ -201,6 +253,54 @@ def download_pdf():
     pdf.save()
     buffer.seek(0)
     return send_file(buffer, as_attachment=True, download_name="Budget_Report.pdf")
+
+@app.route("/get_achievements", methods=["GET"])
+def get_achievements():
+    if "user" not in session:
+        return jsonify({"message": "Not logged in!"}), 401
+    
+    with sqlite3.connect('budget.db') as conn:
+        c = conn.cursor()
+        c.execute('SELECT achievement_key FROM achievements WHERE username = ?', 
+                 (session["user"],))
+        achievements = [row[0] for row in c.fetchall()]
+    return jsonify({"achievements": achievements})
+
+@app.route("/save_achievement", methods=["POST"])
+def save_achievement():
+    if "user" not in session:
+        return jsonify({"message": "Not logged in!"}), 401
+    
+    achievement_key = request.form.get("achievement")
+    try:
+        with sqlite3.connect('budget.db') as conn:
+            c = conn.cursor()
+            c.execute('INSERT INTO achievements (username, achievement_key) VALUES (?, ?)',
+                     (session["user"], achievement_key))
+            conn.commit()
+        return jsonify({"success": True})
+    except sqlite3.IntegrityError:
+        return jsonify({"success": False})
+
+@app.route("/get_user_data")
+def get_user_data():
+    if "user" not in session:
+        return jsonify({"message": "Not logged in!"}), 401
+        
+    with sqlite3.connect('budget.db') as conn:
+        c = conn.cursor()
+        # Get budget
+        c.execute('SELECT amount FROM budgets WHERE username = ?', (session["user"],))
+        budget = c.fetchone()
+        
+        # Get expenses
+        c.execute('SELECT category, amount FROM expenses WHERE username = ?', (session["user"],))
+        expenses = [{"category": row[0], "amount": row[1]} for row in c.fetchall()]
+        
+    return jsonify({
+        "budget": budget[0] if budget else 0,
+        "expenses": expenses
+    })
 
 if __name__ == "__main__":
     init_db()
