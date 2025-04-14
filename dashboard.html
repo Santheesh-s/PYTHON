@@ -96,6 +96,31 @@
             font-size: 18px;
         }
     </style>
+    <script>
+        const INACTIVE_TIMEOUT = 30000; // 15 minutes in milliseconds
+        let inactivityTimer;
+
+        function resetInactivityTimer() {
+            clearTimeout(inactivityTimer);
+            inactivityTimer = setTimeout(autoLogout, INACTIVE_TIMEOUT);
+        }
+
+        function autoLogout() {
+            logout();
+        }
+
+        // Track user activity
+        document.addEventListener('mousemove', resetInactivityTimer);
+        document.addEventListener('keypress', resetInactivityTimer);
+        document.addEventListener('click', resetInactivityTimer);
+        document.addEventListener('scroll', resetInactivityTimer);
+
+        // Initialize timer when page loads
+        window.onload = function() {
+            resetInactivityTimer();
+            // ...existing onload code...
+        };
+    </script>
 </head>
 <body>
     <div class="container">
@@ -256,6 +281,7 @@ function loadChart() {
         }
 
         window.onload = function () {
+            resetInactivityTimer();
             budget = parseFloat(localStorage.getItem("budget")) || 0;
             document.getElementById("budget").value = budget;
             updateRemainingBudget();
