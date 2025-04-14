@@ -95,9 +95,53 @@
             color: #007bff;
             font-size: 18px;
         }
+        #remainingBudget.warning {
+            color: #ff9800;
+        }
+        #remainingBudget.danger {
+            color: #f44336;
+        }
+        .budget-status {
+            margin: 10px 0;
+            font-size: 14px;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background-color: #e0e0e0;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        .progress {
+            height: 100%;
+            background-color: #4CAF50;
+            transition: width 0.3s ease;
+        }
+        .progress.warning {
+            background-color: #ff9800;
+        }
+        .progress.danger {
+            background-color: #f44336;
+        }
+        .edit-btn {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            cursor: pointer;
+            border-radius: 5px;
+            margin-right: 5px;
+        }
+        .edit-btn:hover {
+            background: #388E3C;
+        }
+        .edit-form {
+            display: none;
+            margin: 10px 0;
+        }
     </style>
     <script>
-        const INACTIVE_TIMEOUT = 300000; // 5 minutes in milliseconds
+        const INACTIVE_TIMEOUT = 30000; // 15 minutes in milliseconds
         let inactivityTimer;
 
         function resetInactivityTimer() {
@@ -141,12 +185,28 @@
             <canvas id="expenseChart"></canvas>
         </div>
 
+        <h2>Budget Status</h2>
+        <div class="budget-status">
+            <div class="progress-bar">
+                <div id="budgetProgress" class="progress"></div>
+            </div>
+            <p>Used: <span id="budgetPercentage">0</span>%</p>
+        </div>
         <h2>Remaining Budget: ₹<span id="remainingBudget">0</span></h2>
 
         <h2>Expense List</h2>
         <ul class="expense-list" id="expenseList"></ul>
 
         <button onclick="downloadPDF()">Download PDF</button>
+
+        <div id="editExpenseForm" class="edit-form">
+            <h2>Edit Expense</h2>
+            <input type="text" id="editCategory" placeholder="Category">
+            <input type="number" id="editAmount" placeholder="Amount">
+            <input type="hidden" id="editIndex">
+            <button onclick="saveEdit()">Save Changes</button>
+            <button onclick="cancelEdit()" style="background: #777;">Cancel</button>
+        </div>
     </div>
 
     <script>
@@ -168,14 +228,18 @@
             let amount = parseFloat(document.getElementById("amount").value);
 
             if (category && !isNaN(amount) && amount > 0) {
-                // Calculate current total expenses
                 let expenses = JSON.parse(localStorage.getItem("expenses")) || [];
                 let totalExpenses = expenses.reduce((sum, expense) => sum + expense.amount, 0);
                 
-                // Check if new expense would exceed budget
                 if (totalExpenses + amount > budget) {
-                    alert("This expense would exceed your budget! Cannot add expense.");
+                    alert("Warning: This expense would exceed your budget! Cannot add expense.");
                     return;
+                } else if ((totalExpenses + amount) / budget >= 0.9) {
+                    if (!confirm("Warning: This expense will put you at 90% or more of your budget. Continue?")) {
+                        return;
+                    }
+                } else if ((totalExpenses + amount) / budget >= 0.75) {
+                    alert("Warning: You are approaching your budget limit!");
                 }
 
                 expenses.push({ category, amount });
@@ -184,7 +248,6 @@
                 loadChart();
                 displayExpenses();
                 
-                // Clear input fields after successful addition
                 document.getElementById("category").value = "";
                 document.getElementById("amount").value = "";
             } else {
@@ -205,7 +268,27 @@
             let expenses = JSON.parse(localStorage.getItem("expenses")) || [];
             let totalExpenses = expenses.reduce((sum, expense) => sum + expense.amount, 0);
             let remaining = budget - totalExpenses;
-            document.getElementById("remainingBudget").textContent = remaining.toFixed(2);
+            let percentage = (totalExpenses / budget) * 100 || 0;
+
+            // Update remaining amount
+            const remainingElement = document.getElementById("remainingBudget");
+            remainingElement.textContent = remaining.toFixed(2);
+
+            // Update progress bar and percentage
+            document.getElementById("budgetProgress").style.width = `${percentage}%`;
+            document.getElementById("budgetPercentage").textContent = percentage.toFixed(1);
+
+            // Update colors based on remaining budget
+            if (percentage >= 90) {
+                remainingElement.className = 'danger';
+                document.getElementById("budgetProgress").className = 'progress danger';
+            } else if (percentage >= 75) {
+                remainingElement.className = 'warning';
+                document.getElementById("budgetProgress").className = 'progress warning';
+            } else {
+                remainingElement.className = '';
+                document.getElementById("budgetProgress").className = 'progress';
+            }
         }
 
         let expenseChart = null; // Global variable to store chart instance
@@ -255,10 +338,59 @@ function loadChart() {
             expenses.forEach((expense, index) => {
                 let li = document.createElement("li");
                 li.innerHTML = `${expense.category}: ₹${expense.amount.toFixed(2)} 
-                                <button class="delete-btn" onclick="deleteExpense(${index})">Delete</button>`;
+                                <div>
+                                    <button class="edit-btn" onclick="editExpense(${index})">Edit</button>
+                                    <button class="delete-btn" onclick="deleteExpense(${index})">Delete</button>
+                                </div>`;
                 expenseList.appendChild(li);
             });
         }
+
+        function editExpense(index) {
+            let expenses = JSON.parse(localStorage.getItem("expenses")) || [];
+            let expense = expenses[index];
+            
+            // Show edit form and populate fields
+            document.getElementById("editExpenseForm").style.display = "block";
+            document.getElementById("editCategory").value = expense.category;
+            document.getElementById("editAmount").value = expense.amount;
+            document.getElementById("editIndex").value = index;
+        }
+
+        function saveEdit() {
+            let index = parseInt(document.getElementById("editIndex").value);
+            let newCategory = document.getElementById("editCategory").value;
+            let newAmount = parseFloat(document.getElementById("editAmount").value);
+
+            if (newCategory && !isNaN(newAmount) && newAmount > 0) {
+                let expenses = JSON.parse(localStorage.getItem("expenses")) || [];
+                let totalExpenses = expenses.reduce((sum, exp, i) => i !== index ? sum + exp.amount : sum, 0);
+                
+                // Check if edited amount would exceed budget
+                if (totalExpenses + newAmount > budget) {
+                    alert("This change would exceed your budget! Cannot save changes.");
+                    return;
+                }
+
+                expenses[index] = { category: newCategory, amount: newAmount };
+                localStorage.setItem("expenses", JSON.stringify(expenses));
+                
+                updateRemainingBudget();
+                loadChart();
+                displayExpenses();
+                cancelEdit();
+            } else {
+                alert("Please enter valid expense details.");
+            }
+        }
+
+        function cancelEdit() {
+            document.getElementById("editExpenseForm").style.display = "none";
+            document.getElementById("editCategory").value = "";
+            document.getElementById("editAmount").value = "";
+            document.getElementById("editIndex").value = "";
+        }
+
  function downloadPDF() {
             const { jsPDF } = window.jspdf;
             let doc = new jsPDF();
