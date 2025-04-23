@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Budget Tracker</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            text-align: center;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            width: 90%;
+            max-width: 500px;
+            margin: auto;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.2);
+            margin-top: 20px;
+        }
+        h2 {
+            color: #333;
+            font-size: 22px;
+        }
+        input {
+            width: 90%;
+            padding: 10px;
+            margin: 5px 0;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+        button {
+            width: 95%;
+            padding: 10px;
+            margin: 10px 0;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: 0.3s;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        .logout-btn {
+            background: red;
+        }
+        .logout-btn:hover {
+            background: darkred;
+        }
+        .expense-list {
+            padding: 0;
+            margin-top: 10px;
+        }
+        .expense-list li {
+            background: #e3f2fd;
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 5px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 16px;
+        }
+        .expense-list li:nth-child(even) {
+            background: #bbdefb;
+        }
+        .delete-btn {
+            background: red;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            cursor: pointer;
+            border-radius: 5px;
+        }
+        .delete-btn:hover {
+            background: darkred;
+        }
+        .chart-container {
+            position: relative;
+            width: 100%;
+            height: 250px;
+            margin-top: 20px;
+        }
+        #remainingBudget {
+            font-weight: bold;
+            color: #007bff;
+            font-size: 18px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Budget Tracker</h2>
+        <button class="logout-btn" onclick="logout()">Logout</button>
+
+        <h2>Set Budget</h2>
+        <input type="number" id="budget" placeholder="Enter Budget">
+        <button onclick="setBudget()">Set Budget</button>
+
+        <h2>Add Expense</h2>
+        <input type="text" id="category" placeholder="Category">
+        <input type="number" id="amount" placeholder="Amount">
+        <button onclick="addExpense()">Add Expense</button>
+
+        <h2>Expense Chart</h2>
+        <div class="chart-container">
+            <canvas id="expenseChart"></canvas>
+        </div>
+
+        <h2>Remaining Budget: ₹<span id="remainingBudget">0</span></h2>
+
+        <h2>Expense List</h2>
+        <ul class="expense-list" id="expenseList"></ul>
+
+        <button onclick="downloadPDF()">Download PDF</button>
+    </div>
+
+    <script>
+        let budget = 0;
+
+        function setBudget() {
+            let enteredBudget = parseFloat(document.getElementById("budget").value);
+            if (!isNaN(enteredBudget) && enteredBudget > 0) {
+                budget = enteredBudget;
+                localStorage.setItem("budget", budget);
+                updateRemainingBudget();
+            } else {
+                alert("Please enter a valid budget amount.");
+            }
+        }
+
+        function addExpense() {
+            let category = document.getElementById("category").value;
+            let amount = parseFloat(document.getElementById("amount").value);
+
+            if (category && !isNaN(amount) && amount > 0) {
+                let expenses = JSON.parse(localStorage.getItem("expenses")) || [];
+                expenses.push({ category, amount });
+                localStorage.setItem("expenses", JSON.stringify(expenses));
+                updateRemainingBudget();
+                loadChart();
+                displayExpenses();
+                
+            } else {
+                alert("Please enter valid expense details.");
+            }
+        }
+
+        function deleteExpense(index) {
+            let expenses = JSON.parse(localStorage.getItem("expenses")) || [];
+            expenses.splice(index, 1);
+            localStorage.setItem("expenses", JSON.stringify(expenses));
+            updateRemainingBudget();
+            loadChart();
+            displayExpenses();
+        }
+
+        function updateRemainingBudget() {
+            let expenses = JSON.parse(localStorage.getItem("expenses")) || [];
+            let totalExpenses = expenses.reduce((sum, expense) => sum + expense.amount, 0);
+            let remaining = budget - totalExpenses;
+            document.getElementById("remainingBudget").textContent = remaining.toFixed(2);
+        }
+
+        let expenseChart = null; // Global variable to store chart instance
+
+function loadChart() {
+    let expenses = JSON.parse(localStorage.getItem("expenses")) || [];
+    let categories = expenses.map(exp => exp.category);
+    let amounts = expenses.map(exp => exp.amount);
+
+    let ctx = document.getElementById("expenseChart").getContext("2d");
+
+    // Destroy previous chart instance if it exists
+    if (expenseChart !== null) {
+        expenseChart.destroy();
+    }
+
+    // Create new chart
+    expenseChart = new Chart(ctx, {
+        type: "bar",
+        data: {
+            labels: categories,
+            datasets: [{
+                data: amounts,
+                backgroundColor: "blue"
+            }]
+        }
+    });
+}
+
+        function logout() {
+    fetch('/logout', { method: 'GET' })
+        .then(response => response.json())
+        .then(data => {
+            alert(data.message);
+            localStorage.removeItem("budget");
+            localStorage.removeItem("expenses");
+            window.location.href = "/"; // Redirect to login page
+        })
+        .catch(error => console.error("Logout failed:", error));
+}
+
+        function displayExpenses() {
+            let expenses = JSON.parse(localStorage.getItem("expenses")) || [];
+            let expenseList = document.getElementById("expenseList");
+            expenseList.innerHTML = "";
+
+            expenses.forEach((expense, index) => {
+                let li = document.createElement("li");
+                li.innerHTML = `${expense.category}: ₹${expense.amount.toFixed(2)} 
+                                <button class="delete-btn" onclick="deleteExpense(${index})">Delete</button>`;
+                expenseList.appendChild(li);
+            });
+        }
+ function downloadPDF() {
+            const { jsPDF } = window.jspdf;
+            let doc = new jsPDF();
+
+            doc.setFontSize(18);
+            doc.text("Budget Report", 80, 10);
+
+            let budget = localStorage.getItem("budget") || "0";
+            let expenses = JSON.parse(localStorage.getItem("expenses")) || [];
+            let totalExpenses = expenses.reduce((sum, expense) => sum + expense.amount, 0);
+            let remaining = budget - totalExpenses;
+
+            doc.setFontSize(12);
+            doc.text(`Total Budget: ₹${budget}`, 10, 20);
+            doc.text(`Total Expenses: ₹${totalExpenses.toFixed(2)}`, 10, 30);
+            doc.text(`Remaining Budget: ₹${remaining.toFixed(2)}`, 10, 40);
+
+            let y = 50;
+            doc.text("Expenses:", 10, y);
+            y += 10;
+
+            expenses.forEach(exp => {
+                doc.text(`${exp.category}: ₹${exp.amount.toFixed(2)}`, 10, y);
+                y += 10;
+            });
+
+            html2canvas(document.getElementById("expenseChart")).then(canvas => {
+                let imgData = canvas.toDataURL("image/png");
+                doc.addImage(imgData, "PNG", 10, y + 10, 180, 60);
+                doc.save("budget_report.pdf");
+            });
+        }
+
+        window.onload = function () {
+            budget = parseFloat(localStorage.getItem("budget")) || 0;
+            document.getElementById("budget").value = budget;
+            updateRemainingBudget();
+            loadChart();
+            displayExpenses();
+        };
+    </script>
+</body>
+</html>
